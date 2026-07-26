@@ -1,94 +1,63 @@
-import {
-  Address,
-  nativeToScVal,
-  scValToNative,
-  xdr,
-} from "@stellar/stellar-sdk";
-import { BaseContractClient } from "../base.js";
-import { LPPosition, PoolStats } from "../types/index.js";
-import { parsePoolStats, parseLPPosition } from "../types/schemas.js";
+import { Address, nativeToScVal } from "@stellar/stellar-sdk";
+import { BaseClient } from "../base";
 
-export class PoolClient extends BaseContractClient {
-  async initialize(
-    adminAddress: string,
-    signerPublicKey: string,
-  ): Promise<string> {
-    const args = [new Address(adminAddress).toScVal()];
-    return this.writeContract("initialize", args, signerPublicKey);
-  }
+export type PoolAsset = string;
 
+export interface PoolStats {
+  totalDeposits: bigint;
+  totalFunded: bigint;
+  availableLiquidity: bigint;
+  utilizationRateBps: number;
+  totalYieldDistributed: bigint;
+  activeInvoiceCount: number;
+  totalShares: bigint;
+}
+
+export interface LPPosition {
+  shares: bigint;
+  usdcValue: bigint;
+  yieldEarned: bigint;
+  depositCount: number;
+}
+
+export class PoolClient extends BaseClient {
   async deposit(
     lp: string,
-    usdcAmount: bigint,
-    signerPublicKey: string,
+    asset: PoolAsset,
+    amount: bigint,
+    source?: string,
   ): Promise<string> {
-    const args = [
-      new Address(lp).toScVal(),
-      nativeToScVal(usdcAmount, { type: "u128" }),
-    ];
-    return this.writeContract("deposit", args, signerPublicKey);
+    return this.invoke(
+      "deposit",
+      [
+        new Address(lp).toScVal(),
+        nativeToScVal(asset, { type: "symbol" }),
+        nativeToScVal(amount, { type: "u128" }),
+      ],
+      source ?? lp,
+    );
   }
 
   async withdraw(
     lp: string,
     shares: bigint,
-    signerPublicKey: string,
+    source?: string,
   ): Promise<string> {
-    const args = [
-      new Address(lp).toScVal(),
-      nativeToScVal(shares, { type: "u128" }),
-    ];
-    return this.writeContract("withdraw", args, signerPublicKey);
-  }
-
-  async fundInvoice(
-    invoiceIdHex: string,
-    signerPublicKey: string,
-  ): Promise<boolean> {
-    const args = [xdr.ScVal.scvBytes(Buffer.from(invoiceIdHex, "hex"))];
-    return this.writeContract("fund_invoice", args, signerPublicKey).then(
-      () => true,
+    return this.invoke(
+      "withdraw",
+      [
+        new Address(lp).toScVal(),
+        nativeToScVal(shares, { type: "u128" }),
+      ],
+      source ?? lp,
     );
   }
 
-  async receiveRepayment(
-    invoiceIdHex: string,
-    amount: bigint,
-    signerPublicKey: string,
-  ): Promise<boolean> {
-    const args = [
-      xdr.ScVal.scvBytes(Buffer.from(invoiceIdHex, "hex")),
-      nativeToScVal(amount, { type: "u128" }),
-    ];
-    return this.writeContract("receive_repayment", args, signerPublicKey).then(
-      () => true,
-    );
+  async getStats(): Promise<PoolStats> {
+    return this.read("get_stats", []);
   }
 
-  async getStats(signerPublicKey: string): Promise<PoolStats> {
-    const args: xdr.ScVal[] = [];
-    return this.readContract("get_stats", args, signerPublicKey, (val) =>
-      parsePoolStats(scValToNative(val)),
-    );
-  }
-
-  async getLPPosition(
-    lp: string,
-    signerPublicKey: string,
-  ): Promise<LPPosition> {
-    const args = [new Address(lp).toScVal()];
-    return this.readContract("get_lp_position", args, signerPublicKey, (val) =>
-      parseLPPosition(scValToNative(val)),
-    );
-  }
-
-  async getUtilizationRate(signerPublicKey: string): Promise<number> {
-    const args: xdr.ScVal[] = [];
-    return this.readContract(
-      "get_utilization_rate",
-      args,
-      signerPublicKey,
-      (val) => Number(scValToNative(val) || 0),
-    );
+  async getLPPosition(lp: string): Promise<LPPosition> {
+    return this.read("get_lp_position", [new Address(lp).toScVal()]);
   }
 }
