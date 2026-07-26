@@ -12,6 +12,13 @@ const { handleMutationError } = createErrorHandler("usePool");
 
 const poolContractID = process.env.NEXT_PUBLIC_POOL_CONTRACT_ID || "";
 
+/**
+ * Custom hook for interacting with the TrusTrove liquidity pool contract.
+ *
+ * Provides pool statistics, the connected wallet's LP position, and mutations
+ * for depositing and withdrawing liquidity. All on-chain mutations require a
+ * connected wallet.
+ */
 export function usePool() {
   const queryClient = useQueryClient();
   const { address } = useWalletStore();
@@ -35,18 +42,20 @@ export function usePool() {
   const depositMutation = useMutation({
     mutationFn: async ({
       amount,
-      asset,
+      asset = "USDC",
     }: {
       amount: bigint;
-      asset: AssetType;
+      asset?: AssetType;
     }) => {
       if (!address) throw new Error("Wallet not connected");
 
-      if (asset === "USDC") {
+      // XLM is the native asset and does not use a token allowance. Issued
+      // assets, including USDC, must be approved before the pool transfer.
+      if (asset !== "XLM") {
         await ensureAllowance(poolContractID, amount);
       }
 
-      return poolClient.deposit(address, asset, amount, address);
+      return poolClient.deposit(address, amount, asset, address);
     },
     onSuccess: (txHash: string) => {
       queryClient.invalidateQueries({ queryKey: ["poolStats"] });
@@ -78,13 +87,16 @@ export function usePool() {
     isStatsLoading: statsQuery.isLoading,
     statsError: statsQuery.error,
     refetchStats: statsQuery.refetch,
+
     position: positionQuery.data,
     isPositionLoading: positionQuery.isLoading,
     positionError: positionQuery.error,
     refetchPosition: positionQuery.refetch,
+
     deposit: depositMutation.mutateAsync,
     isDepositing: depositMutation.isPending,
     depositError: depositMutation.error,
+
     withdraw: withdrawMutation.mutateAsync,
     isWithdrawing: withdrawMutation.isPending,
     withdrawError: withdrawMutation.error,
