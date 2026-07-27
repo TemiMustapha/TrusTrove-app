@@ -1,16 +1,22 @@
 import { useState } from "react";
 import { useWalletStore } from "@/store/wallet";
-import { connectFreighter, FreighterError } from "@/lib/freighter";
+import {
+  connectFreighter,
+  getFreighterNetwork,
+  FreighterError,
+} from "@/lib/freighter";
 import { useBalances } from "./useBalances";
 import { createErrorHandler } from "@/lib/errors";
 
 const { captureError } = createErrorHandler("useWallet");
+const REQUIRED_NETWORK = "testnet";
 
 /**
  * Custom hook for managing Stellar wallet connection via Freighter.
  *
  * Provides wallet state and actions to connect or disconnect a Freighter wallet.
- * Connection defaults to the testnet network.
+ * Connection defaults to the testnet network and verifies that Freighter is
+ * configured for testnet before completing the connection.
  *
  * @returns An object containing:
  *   - `address` — The connected wallet's public key, or `null` if not connected.
@@ -42,9 +48,9 @@ export function useWallet() {
   /**
    * Initiates a Freighter wallet connection.
    *
-   * Sets `loading` to `true` during the attempt. On success, stores the wallet
-   * address and defaults the network to `'testnet'`. On failure, stores the error
-   * message and calls `disconnect` to ensure a clean state.
+   * Freighter's active network is checked after access is granted and before
+   * the wallet is stored as connected. A wallet on another network is rejected
+   * so no application transaction can be submitted with the wrong network.
    */
   const connectWallet = async () => {
     setLoading(true);
@@ -52,7 +58,17 @@ export function useWallet() {
     setErrorCode(null);
     try {
       const addr = await connectFreighter();
-      connect(addr, "testnet");
+      const networkDetails = await getFreighterNetwork();
+      const activeNetwork = networkDetails.network.trim().toLowerCase();
+
+      if (activeNetwork !== REQUIRED_NETWORK) {
+        throw new FreighterError(
+          "wrong_network",
+          `Freighter is connected to ${networkDetails.network}. Please switch Freighter to Testnet and try again.`,
+        );
+      }
+
+      connect(addr, REQUIRED_NETWORK);
     } catch (err: unknown) {
       const appError = captureError(err);
       setError(appError.message);
