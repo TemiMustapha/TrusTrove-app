@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { useInvoices } from "@/hooks/useInvoices";
 import { Button } from "@/components/ui/button";
 import { ShieldAlert, PlusCircle } from "lucide-react";
@@ -8,44 +8,44 @@ import type { AssetType } from "@/types";
 import { ASSET_OPTIONS } from "@/lib/assets";
 import { AmountInput } from "@/components/shared/AmountInput";
 import { useWalletStore } from "@/store/wallet";
-import { SimulationPreview } from "@/components/shared/SimulationPreview";
 
 const invoiceContractID = process.env.NEXT_PUBLIC_INVOICE_CONTRACT_ID || "";
 
 const getStellarSdk = () => import("@stellar/stellar-sdk");
 const getTrustroveSdk = () => import("@trusttrove/sdk");
 
-const SIMULATION_PLACEHOLDER_INVOICE_ID =
-  "0000000000000000000000000000000000000000000000000000000000000000";
-
 interface InvoiceFormProps {
   onSuccess?: () => void;
 }
 
-function getErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Transaction failed";
 }
 
+/**
+ * Mark an invoice as cancelled after its off-chain creation succeeds but its
+ * immediate on-chain listing cannot be completed. This keeps the API state
+ * from presenting the invoice as waiting for a listing transaction forever.
+ */
 async function cancelCreatedInvoice(invoiceId: string) {
-  const indexerUrl =
-    process.env.NEXT_PUBLIC_INDEXER_API_URL || "http://localhost:8080";
   const response = await fetch(
-    `${indexerUrl}/invoices/${encodeURIComponent(invoiceId)}/cancel`,
+    `/api/invoices/${encodeURIComponent(invoiceId)}/status`,
     {
-      method: "POST",
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason: "Immediate listing transaction failed" }),
+      body: JSON.stringify({ status: "Cancelled" }),
     },
   );
 
   if (!response.ok) {
-    throw new Error("Unable to cancel the created invoice");
+    throw new Error(`Invoice cleanup failed (${response.status})`);
   }
 }
 
 export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
   const { createInvoice, isCreating, listInvoice } = useInvoices();
   const { address } = useWalletStore();
+
   const [buyer, setBuyer] = useState("");
   const [faceValue, setFaceValue] = useState("");
   const [asset, setAsset] = useState<AssetType>("USDC");
@@ -55,78 +55,11 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<1 | 2>(1);
   const [isListing, setIsListing] = useState(false);
-  const [simDetails, setSimDetails] = useState<any>(null);
-  const [simError, setSimError] = useState<string | null>(null);
-  const [isSimulating, setIsSimulating] = useState(false);
-  const [isFallback, setIsFallback] = useState(false);
-  const [simulationDiscountBps, setSimulationDiscountBps] =
-    useState(discountBps);
-
-  useEffect(() => {
-    if (step !== 2) return;
-    const timer = setTimeout(() => setSimulationDiscountBps(discountBps), 500);
-    return () => clearTimeout(timer);
-  }, [step, discountBps]);
-
-  useEffect(() => {
-    if (step !== 2 || !address) return;
-
-    let active = true;
-
-    const runSimulation = async () => {
-      setIsSimulating(true);
-      setSimError(null);
-      setSimDetails(null);
-      setIsFallback(false);
-
-      try {
-        const [{ InvoiceClient }, { xdr, nativeToScVal }] = await Promise.all([
-          getTrustroveSdk(),
-          getStellarSdk(),
-        ]);
-        const client = new InvoiceClient(invoiceContractID);
-        const result = await client.simulateTransaction(
-          "list_for_financing",
-          [
-            xdr.ScVal.scvBytes(
-              Buffer.from(SIMULATION_PLACEHOLDER_INVOICE_ID, "hex"),
-            ),
-            nativeToScVal(simulationDiscountBps, { type: "u32" }),
-          ],
-          address,
-        );
-        if (active) setSimDetails(result);
-      } catch (err: unknown) {
-        if (!active) return;
-        const message = getErrorMessage(err, "");
-        if (
-          message.includes("not found") ||
-          message.includes("NotFound") ||
-          message.includes("Host") ||
-          message.includes("Simulation failed") ||
-          message.includes("missing")
-        ) {
-          setIsFallback(true);
-        } else {
-          setSimError(message);
-        }
-      } finally {
-        if (active) setIsSimulating(false);
-      }
-    };
-
-    const timer = setTimeout(() => void runSimulation(), 300);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [step, address, simulationDiscountBps]);
 
   const parsedValue = useMemo(
     () => parseFloat(faceValue.replace(/,/g, "")) || 0,
     [faceValue],
   );
-
   const discountPaid = useMemo(
     () => parsedValue * (discountBps / 10000),
     [parsedValue, discountBps],
@@ -143,9 +76,7 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
     const trimmedBuyer = buyer.trim();
     const { StrKey } = await getStellarSdk();
     if (!trimmedBuyer || !StrKey.isValidEd25519PublicKey(trimmedBuyer)) {
-      setError(
-        "Buyer must be a valid Stellar public key (G... account address)",
-      );
+      setError("Buyer must be a valid Stellar public key (G... account address)");
       return;
     }
 
@@ -158,6 +89,7 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
       setError("Please select a due date");
       return;
     }
+
     const selectedDate = new Date(dueDate);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -172,8 +104,14 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
   const handleCreate = async () => {
     setError(null);
     let createdInvoiceId: string | null = null;
+    let listingFailed = false;
 
     try {
+      const faceValueStroops = BigInt(
+        Math.floor(parsedValue * 10_000_000),
+      ).toString();
+      const dueDateTimestamp = Math.floor(new Date(dueDate).getTime() / 1000);
+
       const response = await createInvoice({
         buyer,
         faceValue: BigInt(Math.floor(parsedValue * 10_000_000)).toString(),
@@ -181,52 +119,49 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
         asset,
       });
 
-      if (!response.invoice_id || !response.transaction_hash) {
-        throw new Error(
-          "Invoice creation did not return valid transaction data",
-        );
+      createdInvoiceId = response.invoice_id || null;
+      if (!createdInvoiceId) {
+        throw new Error("Invoice creation did not return a valid invoice ID");
+      }
+      if (!response.transaction_hash) {
+        throw new Error("Invoice creation did not return a transaction hash");
       }
 
-      createdInvoiceId = response.invoice_id;
-
       if (immediateList) {
+        listingFailed = true;
         setIsListing(true);
-        try {
-          const [{ InvoiceClient }, { xdr, nativeToScVal }] = await Promise.all(
-            [getTrustroveSdk(), getStellarSdk()],
-          );
-          const client = new InvoiceClient(invoiceContractID);
-          await client.simulateTransaction(
-            "list_for_financing",
-            [
-              xdr.ScVal.scvBytes(Buffer.from(createdInvoiceId, "hex")),
-              nativeToScVal(discountBps, { type: "u32" }),
-            ],
-            address!,
-          );
-          await listInvoice({ invoiceId: createdInvoiceId, discountBps });
-        } catch (listingError: unknown) {
-          const listingMessage = getErrorMessage(
-            listingError,
-            "Immediate listing failed",
-          );
-          try {
-            await cancelCreatedInvoice(createdInvoiceId);
-          } catch {
-            throw new Error(
-              `${listingMessage}. We could not cancel the created invoice automatically. Please contact support with invoice ID ${createdInvoiceId}.`,
-            );
-          }
 
-          setBuyer("");
-          setFaceValue("");
-          setDueDate("");
-          setStep(1);
-          onSuccess?.();
+        if (!address) {
+          throw new Error("Connect your wallet before listing the invoice");
+        }
+
+        try {
+          const [{ InvoiceClient }, { xdr, nativeToScVal }] = await Promise.all([
+            getTrustroveSdk(),
+            getStellarSdk(),
+          ]);
+          const invoiceClient = new InvoiceClient(invoiceContractID);
+          const args = [
+            xdr.ScVal.scvBytes(Buffer.from(createdInvoiceId, "hex")),
+            nativeToScVal(discountBps, { type: "u32" }),
+          ];
+
+          await invoiceClient.simulateTransaction(
+            "list_for_financing",
+            args,
+            address,
+          );
+        } catch (simulationError: unknown) {
           throw new Error(
-            `${listingMessage}. The created invoice was cancelled and is not available for financing.`,
+            `Simulation failed: ${getErrorMessage(simulationError)}`,
           );
         }
+
+        await listInvoice({
+          invoiceId: createdInvoiceId,
+          discountBps,
+        });
+        listingFailed = false;
       }
 
       setBuyer("");
@@ -234,12 +169,33 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
       setDueDate("");
       setStep(1);
       onSuccess?.();
-    } catch (err: unknown) {
-      setError(getErrorMessage(err, "Transaction failed"));
+    } catch (creationOrListingError: unknown) {
+      const originalMessage = getErrorMessage(creationOrListingError);
+
+      if (createdInvoiceId && listingFailed) {
+        try {
+          await cancelCreatedInvoice(createdInvoiceId);
+          setError(
+            `${originalMessage}. The created invoice was cancelled and will not remain pending listing.`,
+          );
+        } catch (cleanupError: unknown) {
+          setError(
+            `${originalMessage}. We could not automatically cancel the created invoice; please refresh and contact support if it remains visible.`,
+          );
+          console.error("Failed to cancel invoice after listing failure", {
+            invoiceId: createdInvoiceId,
+            error: cleanupError,
+          });
+        }
+      } else {
+        setError(originalMessage);
+      }
     } finally {
       setIsListing(false);
     }
   };
+
+  const isBusy = isCreating || isListing;
 
   return (
     <div className="space-y-5">
@@ -251,159 +207,67 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
       </div>
 
       <div className="flex items-center gap-2 mb-5 px-1">
-        <span className={step === 1 ? "text-primary" : "text-emerald-400"}>
-          1. Terms
-        </span>
-        <span className="flex-1 h-px bg-border" />
-        <span className={step === 2 ? "text-primary" : "text-slate-500"}>
-          2. Sign
-        </span>
+        <div className={`flex items-center gap-1.5 ${step === 1 ? "text-primary" : "text-emerald-400"}`}>
+          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold font-mono border ${step === 1 ? "bg-primary/20 border-primary text-primary" : "bg-emerald-400/20 border-emerald-400 text-emerald-400"}`}>1</div>
+          <span className="text-[10px] font-bold font-mono uppercase tracking-wider">Terms</span>
+        </div>
+        <div className={`flex-1 h-px mx-1 ${step === 2 ? "bg-emerald-400/50" : "bg-border"}`} />
+        <div className={`flex items-center gap-1.5 ${step === 2 ? "text-primary" : "text-slate-500"}`}>
+          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold font-mono border ${step === 2 ? "bg-primary/20 border-primary text-primary" : "bg-slate-800 border-border text-slate-500"}`}>2</div>
+          <span className="text-[10px] font-bold font-mono uppercase tracking-wider">Sign</span>
+        </div>
       </div>
 
       {step === 1 ? (
         <form onSubmit={handleNextStep} className="space-y-4">
-          <label className="block text-xs font-mono text-slate-400">
-            Buyer Wallet Address
-            <input
-              type="text"
-              placeholder="e.g. GBBD47IF6L... (Stellar Public Key)"
-              className="mt-1 w-full bg-[#080c10] border border-border rounded px-3 py-2.5 text-white"
-              value={buyer}
-              onChange={(event) => setBuyer(event.target.value)}
-              required
-            />
-          </label>
-          <AmountInput
-            value={faceValue}
-            onChange={setFaceValue}
-            asset={asset}
-            label="Face Value"
-            placeholder="50,000.00"
-            required
-          />
-          <select
-            value={asset}
-            onChange={(event) => setAsset(event.target.value as AssetType)}
-            className="w-full bg-[#080c10] border border-border rounded px-3 py-2.5 text-white"
-          >
-            {ASSET_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <input
-            type="date"
-            min={new Date(Date.now() + 86400000).toISOString().split("T")[0]}
-            value={dueDate}
-            onChange={(event) => setDueDate(event.target.value)}
-            className="w-full bg-[#080c10] border border-border rounded px-3 py-2.5 text-white"
-            required
-          />
-          <input
-            type="range"
-            min="50"
-            max="500"
-            step="10"
-            value={discountBps}
-            onChange={(event) =>
-              setDiscountBps(parseInt(event.target.value, 10))
-            }
-            aria-label="Financing Discount Rate"
-            className="w-full"
-          />
-          <label className="flex items-center gap-2 text-xs text-slate-400">
-            <input
-              type="checkbox"
-              checked={immediateList}
-              onChange={(event) => setImmediateList(event.target.checked)}
-            />
-            List for immediate LP financing at creation
-          </label>
+          <div className="space-y-1">
+            <label className="block text-[10px] font-bold font-mono text-slate-500 uppercase tracking-wider">Buyer Wallet Address</label>
+            <input type="text" placeholder="e.g. GBBD47IF6L... (Stellar Public Key)" className="w-full bg-[#080c10] border border-border rounded px-3 py-2.5 text-white text-xs font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all min-h-[44px]" value={buyer} onChange={(event) => setBuyer(event.target.value)} required />
+          </div>
 
-          {error && (
-            <div className="p-3 text-rose-400 text-xs flex gap-2">
-              <ShieldAlert className="w-4 h-4" />
-              <span>{error}</span>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="col-span-2 space-y-1">
+              <AmountInput value={faceValue} onChange={setFaceValue} asset={asset} label="Face Value" placeholder="50,000.00" required />
             </div>
-          )}
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold font-mono text-slate-500 uppercase tracking-wider">Asset</label>
+              <select value={asset} onChange={(event) => setAsset(event.target.value as AssetType)} className="w-full bg-[#080c10] border border-border rounded px-3 py-2.5 text-white text-xs font-mono min-h-[44px]">
+                {ASSET_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold font-mono text-slate-500 uppercase tracking-wider">Due Date</label>
+              <input type="date" min={new Date(Date.now() + 86400000).toISOString().split("T")[0]} value={dueDate} onChange={(event) => setDueDate(event.target.value)} className="w-full bg-[#080c10] border border-border rounded px-3 py-2.5 text-white text-xs font-mono min-h-[44px]" required />
+              <span className="text-[10px] font-mono text-slate-500 block mt-1">Select invoice maturity date</span>
+            </div>
+          </div>
 
-          <Button type="submit" className="w-full">
-            REVIEW FINANCING TERMS
-          </Button>
+          <div className="space-y-2 pt-2 border-t border-border/30">
+            <div className="flex justify-between text-[10px] font-mono"><span className="text-slate-500 font-bold uppercase tracking-wider">Financing Discount Rate</span><span className="text-primary font-bold">{(discountBps / 100).toFixed(2)}% ({discountBps} bps)</span></div>
+            <input type="range" min="50" max="500" step="10" value={discountBps} onChange={(event) => setDiscountBps(parseInt(event.target.value, 10))} aria-label="Financing Discount Rate" className="w-full accent-primary bg-slate-900 h-2 rounded cursor-pointer" />
+            <div className="flex justify-between text-[9px] text-slate-600 font-mono"><span>0.5% (50 bps)</span><span>5.0% (500 bps)</span></div>
+          </div>
+
+          <div className="flex items-center gap-3 pt-2">
+            <input type="checkbox" id="immediateList" className="rounded bg-[#080c10] border-border text-primary w-5 h-5" checked={immediateList} onChange={(event) => setImmediateList(event.target.checked)} />
+            <label htmlFor="immediateList" className="text-xs font-mono text-slate-400 cursor-pointer select-none py-2">List for immediate LP financing at creation</label>
+          </div>
+
+          {error && <div className="p-3 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-start gap-2"><ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" /><span className="font-mono">{error}</span></div>}
+          <Button type="submit" className="w-full bg-primary hover:bg-primary-hover text-black font-bold uppercase tracking-wider text-xs rounded py-2.5 min-h-[44px]">REVIEW FINANCING TERMS</Button>
         </form>
       ) : (
         <div className="space-y-4 font-mono text-xs">
-          <div className="border border-border p-4 rounded-lg space-y-2">
-            <div className="flex justify-between">
-              <span>Invoice Face Value:</span>
-              <span>
-                {parsedValue.toLocaleString()} {asset}
-              </span>
-            </div>
-
-            {immediateList ? (
-              <>
-                <div className="flex justify-between">
-                  <span>Discount:</span>
-                  <span>
-                    -{discountPaid.toLocaleString()} {asset}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Net Payout Today:</span>
-                  <span>
-                    {payoutAmount.toLocaleString()} {asset}
-                  </span>
-                </div>
-              </>
-            ) : (
-              <div className="text-slate-400">
-                The invoice will be created without immediate listing.
-              </div>
-            )}
+          <div className="bg-[#080c10] border border-border p-4 rounded-lg space-y-2">
+            <div className="flex justify-between"><span className="text-slate-500">Invoice Face Value:</span><span className="text-white font-bold">{parsedValue.toLocaleString()} {asset}</span></div>
+            {immediateList && <><div className="flex justify-between text-rose-400"><span>Discount ({(discountBps / 100).toFixed(2)}%):</span><span>-{discountPaid.toLocaleString()} {asset}</span></div><div className="border-t border-border/40 my-2 pt-2 flex justify-between text-emerald-400 font-bold"><span>Net Payout Today:</span><span>{payoutAmount.toLocaleString()} {asset}</span></div></>}
+            <div className="flex justify-between"><span className="text-slate-500">Buyer:</span><span className="text-white truncate max-w-[220px]">{buyer}</span></div>
+            <div className="flex justify-between"><span className="text-slate-500">Due Date:</span><span className="text-white">{dueDate}</span></div>
           </div>
-
-          {immediateList && (
-            <SimulationPreview
-              details={simDetails}
-              isLoading={isSimulating}
-              error={simError}
-              isFallback={isFallback}
-            />
-          )}
-
-          {error && (
-            <div className="p-3 text-rose-400 text-xs flex gap-2">
-              <ShieldAlert className="w-4 h-4" />
-              <span>{error}</span>
-            </div>
-          )}
-
+          {error && <div className="p-3 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-start gap-2"><ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" /><span className="font-mono">{error}</span></div>}
           <div className="flex gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              className="flex-1"
-              onClick={() => setStep(1)}
-              disabled={isCreating || isListing}
-            >
-              BACK
-            </Button>
-            <Button
-              type="button"
-              className="flex-1"
-              onClick={() => void handleCreate()}
-              disabled={isCreating || isListing}
-            >
-              {isListing
-                ? "LISTING..."
-                : isCreating
-                  ? "CREATING..."
-                  : immediateList
-                    ? "CREATE & LIST"
-                    : "CREATE INVOICE"}
-            </Button>
+            <Button type="button" variant="outline" className="flex-1" disabled={isBusy} onClick={() => { setError(null); setStep(1); }}>BACK</Button>
+            <Button type="button" className="flex-1 bg-primary hover:bg-primary-hover text-black font-bold" disabled={isBusy} onClick={handleCreate}>{isListing ? "LISTING..." : isCreating ? "CREATING..." : "CREATE INVOICE"}</Button>
           </div>
         </div>
       )}
