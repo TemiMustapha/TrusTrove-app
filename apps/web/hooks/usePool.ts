@@ -78,16 +78,13 @@ export function usePool() {
     isStatsLoading: statsQuery.isLoading,
     statsError: statsQuery.error,
     refetchStats: statsQuery.refetch,
-
     position: positionQuery.data,
     isPositionLoading: positionQuery.isLoading,
     positionError: positionQuery.error,
     refetchPosition: positionQuery.refetch,
-
     deposit: depositMutation.mutateAsync,
     isDepositing: depositMutation.isPending,
     depositError: depositMutation.error,
-
     withdraw: withdrawMutation.mutateAsync,
     isWithdrawing: withdrawMutation.isPending,
     withdrawError: withdrawMutation.error,
