@@ -75,8 +75,7 @@ export default function LPDashboard() {
     withdraw,
     isWithdrawing,
   } = usePool();
-  const { setError: setLocalError, clearError: clearLocalError } =
-    useAppError();
+  const { setError: setLocalError, clearError: clearLocalError } = useAppError();
 
   const [depositAmount, setDepositAmount] = useState("");
   const [depositAsset] = useState<AssetType>("USDC");
@@ -105,7 +104,6 @@ export default function LPDashboard() {
     const timer = setTimeout(async () => {
       setIsSimulating(true);
       setSimError(null);
-
       try {
         const poolClient = new PoolClient(poolContractID);
         const args = [
@@ -149,7 +147,6 @@ export default function LPDashboard() {
     const timer = setTimeout(async () => {
       setIsWithdrawSimulating(true);
       setWithdrawSimError(null);
-
       try {
         const poolClient = new PoolClient(poolContractID);
         const args = [
@@ -198,11 +195,9 @@ export default function LPDashboard() {
         nativeToScVal(amountStroops, { type: "u128" }),
       ];
       await poolClient.simulateTransaction("deposit", args, address!);
-
       setPendingText(`Depositing ${depositAsset} into pool...`);
       setPendingHash(null);
       setShowPending(true);
-
       const result = await deposit({ amount: amountStroops });
       if (typeof result === "string") setPendingHash(result);
       setDepositAmount("");
@@ -223,7 +218,6 @@ export default function LPDashboard() {
     setPendingText("Redeeming LP shares...");
     setPendingHash(null);
     setShowPending(true);
-
     try {
       const result = await withdraw({
         shares: BigInt(Math.floor(shares * 10_000_000)),
@@ -270,8 +264,7 @@ export default function LPDashboard() {
             Liquidity Provider Portal
           </h1>
           <p className="mt-1 text-xs text-slate-500">
-            Supply USDC liquidity to automate invoice discounting and capture
-            trade yield.
+            Supply USDC liquidity to automate invoice discounting and capture trade yield.
           </p>
         </div>
 
@@ -294,37 +287,21 @@ export default function LPDashboard() {
           ) : (
             <div className="grid grid-cols-2 gap-4 rounded-lg border border-border bg-card p-5 font-mono md:grid-cols-4">
               <div>
-                <span className="block text-[10px] uppercase text-slate-500">
-                  Total Deposits
-                </span>
-                <strong className="mt-1 block text-white">
-                  {formatAmount(stats?.totalDeposits)}
-                </strong>
+                <span className="block text-[10px] uppercase text-slate-500">Total Deposits</span>
+                <strong className="mt-1 block text-white">{formatAmount(stats?.totalDeposits)}</strong>
               </div>
               <div>
-                <span className="block text-[10px] uppercase text-slate-500">
-                  Available Liquidity
-                </span>
+                <span className="block text-[10px] uppercase text-slate-500">Available Liquidity</span>
+                <strong className="mt-1 block text-primary">{formatAmount(stats?.availableLiquidity)}</strong>
+              </div>
+              <div>
+                <span className="block text-[10px] uppercase text-slate-500">Yield Distributed</span>
+                <strong className="mt-1 block text-emerald-400">{formatAmount(stats?.totalYieldDistributed)}</strong>
+              </div>
+              <div>
+                <span className="block text-[10px] uppercase text-slate-500">LP Share Price</span>
                 <strong className="mt-1 block text-primary">
-                  {formatAmount(stats?.availableLiquidity)}
-                </strong>
-              </div>
-              <div>
-                <span className="block text-[10px] uppercase text-slate-500">
-                  Yield Distributed
-                </span>
-                <strong className="mt-1 block text-emerald-400">
-                  {formatAmount(stats?.totalYieldDistributed)}
-                </strong>
-              </div>
-              <div>
-                <span className="block text-[10px] uppercase text-slate-500">
-                  LP Share Price
-                </span>
-                <strong className="mt-1 block text-primary">
-                  {sharePrice === null
-                    ? "Syncing..."
-                    : `${sharePrice.toFixed(7)} USDC`}
+                  {sharePrice === null ? "Syncing..." : `${sharePrice.toFixed(7)} USDC`}
                 </strong>
               </div>
             </div>
@@ -332,15 +309,10 @@ export default function LPDashboard() {
         </ErrorBoundary>
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-          <form
-            onSubmit={handleDeposit}
-            className="space-y-4 rounded-lg border border-border bg-card p-5"
-          >
+          <form onSubmit={handleDeposit} className="space-y-4 rounded-lg border border-border bg-card p-5">
             <div className="flex items-center gap-2">
               <Wallet className="h-4 w-4 text-primary" />
-              <h2 className="font-mono text-sm font-bold uppercase text-white">
-                Supply Liquidity
-              </h2>
+              <h2 className="font-mono text-sm font-bold uppercase text-white">Supply Liquidity</h2>
             </div>
             <AmountInput
               value={depositAmount}
@@ -357,29 +329,16 @@ export default function LPDashboard() {
                   : `${depositPreview.toFixed(7)} LP shares at ${sharePrice!.toFixed(7)} USDC per share`
               }
             />
-            <Button
-              type="submit"
-              disabled={isDepositing || !isVerified}
-              className="w-full"
-            >
+            <Button type="submit" disabled={isDepositing || !isVerified} className="w-full">
               {isDepositing ? "Depositing..." : "Deposit USDC"}
             </Button>
-            <SimulationPreview
-              details={simDetails}
-              error={simError}
-              isLoading={isSimulating}
-            />
+            <SimulationPreview details={simDetails} error={simError} isLoading={isSimulating} />
           </form>
 
-          <form
-            onSubmit={handleWithdraw}
-            className="space-y-4 rounded-lg border border-border bg-card p-5"
-          >
+          <form onSubmit={handleWithdraw} className="space-y-4 rounded-lg border border-border bg-card p-5">
             <div className="flex items-center gap-2">
               <Wallet className="h-4 w-4 text-primary" />
-              <h2 className="font-mono text-sm font-bold uppercase text-white">
-                Redeem LP Shares
-              </h2>
+              <h2 className="font-mono text-sm font-bold uppercase text-white">Redeem LP Shares</h2>
             </div>
             <AmountInput
               value={withdrawShares}
@@ -396,18 +355,10 @@ export default function LPDashboard() {
                   : `${withdrawalPreview.toFixed(7)} USDC at ${sharePrice!.toFixed(7)} USDC per share`
               }
             />
-            <Button
-              type="submit"
-              disabled={isWithdrawing || !isVerified}
-              className="w-full"
-            >
+            <Button type="submit" disabled={isWithdrawing || !isVerified} className="w-full">
               {isWithdrawing ? "Redeeming..." : "Redeem Shares"}
             </Button>
-            <SimulationPreview
-              details={withdrawSimDetails}
-              error={withdrawSimError}
-              isLoading={isWithdrawSimulating}
-            />
+            <SimulationPreview details={withdrawSimDetails} error={withdrawSimError} isLoading={isWithdrawSimulating} />
           </form>
         </div>
 
@@ -426,10 +377,9 @@ export default function LPDashboard() {
 
       {showPending && (
         <TransactionPending
-          isOpen={showPending}
-          txHash={pendingHash}
-          statusText={pendingText}
-          onClose={pendingHash ? () => setShowPending(false) : undefined}
+          hash={pendingHash}
+          message={pendingText}
+          onClose={() => setShowPending(false)}
         />
       )}
     </PageLayout>
