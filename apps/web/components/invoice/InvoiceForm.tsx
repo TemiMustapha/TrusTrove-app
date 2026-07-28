@@ -11,10 +11,8 @@ import { useWalletStore } from "@/store/wallet";
 import { SimulationPreview } from "@/components/shared/SimulationPreview";
 
 const invoiceContractID = process.env.NEXT_PUBLIC_INVOICE_CONTRACT_ID || "";
-
 const getStellarSdk = () => import("@stellar/stellar-sdk");
 const getTrustroveSdk = () => import("@trusttrove/sdk");
-
 const SIMULATION_PLACEHOLDER_INVOICE_ID =
   "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -27,10 +25,8 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 async function cancelCreatedInvoice(invoiceId: string) {
-  const indexerUrl =
-    process.env.NEXT_PUBLIC_INDEXER_API_URL || "http://localhost:8080";
   const response = await fetch(
-    `${indexerUrl}/invoices/${encodeURIComponent(invoiceId)}/cancel`,
+    `/api/invoices/${encodeURIComponent(invoiceId)}/cancel`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -70,7 +66,6 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
 
   useEffect(() => {
     if (step !== 2 || !address) return;
-
     let active = true;
 
     const runSimulation = async () => {
@@ -126,7 +121,6 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
     () => parseFloat(faceValue.replace(/,/g, "")) || 0,
     [faceValue],
   );
-
   const discountPaid = useMemo(
     () => parsedValue * (discountBps / 10000),
     [parsedValue, discountBps],
@@ -148,12 +142,10 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
       );
       return;
     }
-
     if (parsedValue <= 0) {
       setError("Face value must be a positive number");
       return;
     }
-
     if (!dueDate) {
       setError("Please select a due date");
       return;
@@ -182,19 +174,17 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
       });
 
       if (!response.invoice_id || !response.transaction_hash) {
-        throw new Error(
-          "Invoice creation did not return valid transaction data",
-        );
+        throw new Error("Invoice creation did not return valid transaction data");
       }
-
       createdInvoiceId = response.invoice_id;
 
       if (immediateList) {
         setIsListing(true);
         try {
-          const [{ InvoiceClient }, { xdr, nativeToScVal }] = await Promise.all(
-            [getTrustroveSdk(), getStellarSdk()],
-          );
+          const [{ InvoiceClient }, { xdr, nativeToScVal }] = await Promise.all([
+            getTrustroveSdk(),
+            getStellarSdk(),
+          ]);
           const client = new InvoiceClient(invoiceContractID);
           await client.simulateTransaction(
             "list_for_financing",
@@ -320,14 +310,12 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
             />
             List for immediate LP financing at creation
           </label>
-
           {error && (
             <div className="p-3 text-rose-400 text-xs flex gap-2">
               <ShieldAlert className="w-4 h-4" />
               <span>{error}</span>
             </div>
           )}
-
           <Button type="submit" className="w-full">
             REVIEW FINANCING TERMS
           </Button>
@@ -341,7 +329,6 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
                 {parsedValue.toLocaleString()} {asset}
               </span>
             </div>
-
             {immediateList ? (
               <>
                 <div className="flex justify-between">
@@ -363,7 +350,6 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
               </div>
             )}
           </div>
-
           {immediateList && (
             <SimulationPreview
               details={simDetails}
@@ -372,14 +358,12 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
               isFallback={isFallback}
             />
           )}
-
           {error && (
             <div className="p-3 text-rose-400 text-xs flex gap-2">
               <ShieldAlert className="w-4 h-4" />
               <span>{error}</span>
             </div>
           )}
-
           <div className="flex gap-3">
             <Button
               type="button"
