@@ -139,7 +139,7 @@ describe("usePool", () => {
   });
 
   it("returns position when wallet is connected", () => {
-    vi.mocked(useQuery).mockImplementation(function (args: any) {
+    vi.mocked(useQuery).mockImplementation(function (args: any): any {
       const qk = args.queryKey;
       if (qk[0] === "poolStats") {
         return makeQueryResult();
@@ -160,7 +160,12 @@ describe("usePool", () => {
   });
 
   it("position query is disabled without wallet", () => {
-    vi.mocked(useQuery).mockReturnValue(makeQueryResult());
+    vi.mocked(useQuery).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    } as any);
 
     renderHook(() => usePool());
     const calls = vi.mocked(useQuery).mock.calls;
