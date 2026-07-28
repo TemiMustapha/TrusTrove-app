@@ -19,7 +19,11 @@ export class PoolClient extends BaseContractClient {
     return this.writeContract("deposit", args, caller);
   }
 
-  async withdraw(lp: string, shares: bigint, caller: string): Promise<string> {
+  async withdraw(
+    lp: string,
+    shares: bigint,
+    caller: string,
+  ): Promise<string> {
     const args = [
       new Address(lp).toScVal(),
       nativeToScVal(shares, { type: "u128" }),
